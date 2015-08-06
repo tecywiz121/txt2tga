@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+
+from PIL import Image
+import struct
+import sys
+import itertools
+import math
+from zlib import compress, crc32
+
+
+HEADER_FMT = '<HII'
+VERSION_MASK = 0xF000
+FLAG_ZLIB = 0x0001
+
+def get_version(flags):
+    return (flags & VERSION_MASK) >> 12
+
+def split_seq(iterable, size):
+    it = iter(iterable)
+    item = list(itertools.islice(it, size))
+    while item:
+        item += [0] * (size - len(item))
+        yield tuple(item)
+        item = list(itertools.islice(it, size))
+
+def main(argv):
+    src = None
+    if argv[2] == '-':
+        src = sys.stdin.read()
+    else:
+        with open(argv[2], 'rb') as f:
+            src = f.read()
+
+    flags = 0x1000 # Version 1
+    zipped = compress(src)
+    if len(zipped) < len(src):
+        flags |= FLAG_ZLIB
+        src = zipped
+
+    side = len(src)+struct.calcsize(HEADER_FMT)
+    side = int(math.ceil(math.sqrt(math.ceil(side/3))))
+    side = 1<<(side-1).bit_length()
+
+    output = argv[0]
+    image = Image.new('RGB', (side, side), None)
+
+    hash = crc32(src) & 0xFFFFFFFF
+
+    data = struct.pack(HEADER_FMT + str(len(src)) + 's', flags, len(src), hash, src)
+
+    for idx,value in enumerate(split_seq((ord(y) for y in data), 3)):
+        x = idx%image.size[0]
+        y = idx//image.size[0]
+        image.putpixel((x, y), value)
+
+    if argv[1] == '-':
+        image.save(sys.stdout, format='tga')
+    else:
+        image.save(sys.argv[1], format='tga')
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        sys.stderr.write('USAGE: txt2tga <output> <input>\n')
+        sys.exit(1)
+    main(sys.argv)
